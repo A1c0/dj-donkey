@@ -3,6 +3,8 @@ import {loadDotEnv} from './lib/dotenv.js';
 
 loadDotEnv ();
 
+console.log(process.env);
+
 class Command {
   constructor(regex, func) {
     this.regex = regex;
@@ -10,9 +12,21 @@ class Command {
   }
 }
 
+class MusicPlayer {
+
+  constructor() {}
+
+  play() {
+    return;
+  }
+
+  stop() {
+    return;
+  }
+}
 
 const client = new Discord.Client ();
-const musicPlayer;
+const musicPlayer = new MusicPlayer();
 
 client.once ('ready', () => {
   console.log ('Ready!');
@@ -32,23 +46,25 @@ const commands = [
   new Command(/^!stop$/i, _stop),
   new Command(/^!next (.*)$/i, _next),
   new Command(/^!skip$/i, _skip),
-  new Command(/^!list$/i, _list)
+  new Command(/^!list$/i, _list),
+  new Command(/^!disconnect$/i, _disconnect)
 ]
 
 const queue = [];
 
 client.on ('message', async message => {
-  const messageContent = message.content;
-  commands.forEach(command => _checkCommand(command, messageContent));
+  commands.forEach(command => _checkCommand(command, message));
 });
 
 function _checkCommand(command, message) {
-  if (S.test(command.regex)) {
-    command.func(S.maybeToNullable (firstGroupMatch (command.regex) (message)), message);
+  const messageContent = message.content;
+  if (command.regex.test(messageContent)) {
+    const r = command.regex.exec(messageContent);
+    command.func(message, r[1]);
   }
 }
 
-function _play(url, message) {
+function _play(message, url) {
   queue.push(url);
   if (queue.length === 1) {
     return _playQueue(message);
@@ -56,13 +72,13 @@ function _play(url, message) {
   return message.channel.send(`Queuing ${url}`);
 }
 
-function _stop() {
+function _stop(message) {
   musicPlayer.stop();
   queue.splice(0, queue.length);
   return message.channel.send('Stopping :(');
 }
 
-function _next(url, message) {
+function _next(message, url) {
   if (queue.length === 0) {
     return _play(url, message);
   }
@@ -70,7 +86,7 @@ function _next(url, message) {
   return message.channel.send(`Next song will be ${url}`);
 }
 
-function _skip(url ,message) {
+function _skip(message) {
   if (queue.length <= 1) {
     message.channel.send('No song to skip to');
     return _stop();
@@ -80,32 +96,54 @@ function _skip(url ,message) {
   return _playQueue(message);
 }
 
-function _list(url, message) {
+function _list(message) {
   if (queue.length === 0) {
     return message.channel.send('The queue is empty :(');
   }
-  return message.channel.send(queue.join("\n"));
+  const msg = queue.map((value, index) => ` ${index}. ${value}`).join("\n");
+  return message.channel.send(msg);
+}
+
+function _disconnect(message) {
+  const voiceChannel = message.member.voice.channel;
+  if (!voiceChannel)
+    return message.channel.send('I will not disconnect! Come get me in the voice channel!');
+  try {
+    _stop(message);
+    voiceChannel.leave();
+    return message.channel.send("Ok, I will miss you.");
+  } catch (e) {
+    console.log(e);
+  }
 }
 
 function _playQueue(message) {
   if (queue.length === 0) {
     return message.channel.send('ERROR: Trying to play an empty queue :o');
   }
-  _joinChannel(message);
+  if (!_joinChannel(message)) {
+    queue.splice(0, queue.length);
+    return;
+  }
+  message.channel.send('https://www.mariowiki.com/images/e/e8/Cranky_Kong_DJ.gif');
   musicPlayer.play(queue[0]);
   return message.channel.send(`Playing ${queue[0]}`);
 }
 
 function _joinChannel(message) {
   const voiceChannel = message.member.voice.channel;
-  if (!voiceChannel)
-    return message.channel.send ('You need to be in a voice channel to play music!');
+  if (!voiceChannel) {
+    message.channel.send('You need to be in a voice channel to play music!');
+    return false;
+  }
   const permissions = voiceChannel.permissionsFor (message.client.user);
   if (!permissions.has ('CONNECT') || !permissions.has ('SPEAK')) {
-    return message.channel.send ('I need the permissions to join and speak in your voice channel!');
+     message.channel.send ('I need the permissions to join and speak in your voice channel!');
+     return false;
   }
   try {
     voiceChannel.join()
+    return true;
   } catch (e) {
     console.log (e);
   }
