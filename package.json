@@ -1,0 +1,22 @@
+{
+  "name": "dj-donkey",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": "^16.14.0"
+  },
+  "dependencies": {
+    "@discordjs/opus": "^0.5.3",
+    "discord.js": "^12.5.3",
+    "dotenv": "^10.0.0",
+    "ffmpeg": "^0.0.4",
+    "ffmpeg-static": "^4.4.0",
+    "node-fetch": "^2.6.1",
+    "prettier": "^2.3.2",
+  },
+  "devDependencies": {}
+}
