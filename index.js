@@ -1,14 +1,18 @@
-import {Readable} from 'stream';
-
 import Discord from 'discord.js';
-import fetch from 'node-fetch';
-
-import {getSoundUrl, putSoundOnDB} from './app/db.mjs';
 import {loadDotEnv} from './lib/dotenv.js';
 
 loadDotEnv ();
 
+class Command {
+  constructor(regex, func) {
+    this.regex = regex;
+    this.func = func;
+  }
+}
+
+
 const client = new Discord.Client ();
+const musicPlayer;
 
 client.once ('ready', () => {
   console.log ('Ready!');
@@ -23,54 +27,89 @@ client.once ('disconnect', () => {
 });
 
 // prettier-sanctuary-ignore
-const messageAddSoundRegex = /^soundmoji +add +(<:.*?:\d+>) *$/i;
+const commands = [
+  new Command(/^!play (.*)$/i, _play),
+  new Command(/^!stop$/i, _stop),
+  new Command(/^!next (.*)$/i, _next),
+  new Command(/^!skip$/i, _skip),
+  new Command(/^!list$/i, _list)
+]
 
-const messageToJoinRegex = /^@sound-moji +joinUs *$/i;
-
-const isMessageForJoin = S.test (messageToJoinRegex);
-
-const isSoundmoji = S.test (/^<:[a-zA-Z0-9]+:\d+>$/);
-
-const isMessageForAddSound = S.test (messageAddSoundRegex);
+const queue = [];
 
 client.on ('message', async message => {
-  const guildId = message.guild.id;
   const messageContent = message.content;
-  if (isMessageForAddSound (messageContent)) {
-    const emoji = S.maybeToNullable (firstGroupMatch (messageAddSoundRegex)
-                                                     (messageContent));
-    const attachment = message.attachments.toJSON ()[0]?.attachment;
-
-    try {
-      await promise (putSoundOnDB (guildId) (emoji) (attachment));
-      await message.channel.send (`> :information_source: sound add for ${emoji}`);
-    } catch (e) {
-      await message.channel.send (`> :warning: **Error:** \n> ${e}`);
-    }
-  } else if (isSoundmoji (messageContent)) {
-    const voiceChannel = message.member.voice.channel;
-    if (!voiceChannel)
-      return message.channel.send ('You need to be in a voice channel to play music!');
-    const permissions = voiceChannel.permissionsFor (message.client.user);
-    if (!permissions.has ('CONNECT') || !permissions.has ('SPEAK')) {
-      return message.channel.send ('I need the permissions to join and speak in your voice channel!');
-    }
-    try {
-      const soundUrl = await promise (getSoundUrl (guildId) (messageContent));
-      const soundBuffer = await fetch (soundUrl).then (res => res.buffer ());
-      const stream = Readable.from (soundBuffer);
-
-      voiceChannel.join ().then (connection => {
-        const dispatcher = connection.play (stream);
-        dispatcher.on ('end', end => {
-          voiceChannel.leave ();
-        });
-      });
-    } catch (e) {
-      console.log (e);
-    }
-  }
+  commands.forEach(command => _checkCommand(command, messageContent));
 });
+
+function _checkCommand(command, message) {
+  if (S.test(command.regex)) {
+    command.func(S.maybeToNullable (firstGroupMatch (command.regex) (message)), message);
+  }
+}
+
+function _play(url, message) {
+  queue.push(url);
+  if (queue.length === 1) {
+    return _playQueue(message);
+  }
+  return message.channel.send(`Queuing ${url}`);
+}
+
+function _stop() {
+  musicPlayer.stop();
+  queue.splice(0, queue.length);
+  return message.channel.send('Stopping :(');
+}
+
+function _next(url, message) {
+  if (queue.length === 0) {
+    return _play(url, message);
+  }
+  queue.splice(1, 0, url);
+  return message.channel.send(`Next song will be ${url}`);
+}
+
+function _skip(url ,message) {
+  if (queue.length <= 1) {
+    message.channel.send('No song to skip to');
+    return _stop();
+  }
+  queue.splice(0,1);
+  musicPlayer.stop();
+  return _playQueue(message);
+}
+
+function _list(url, message) {
+  if (queue.length === 0) {
+    return message.channel.send('The queue is empty :(');
+  }
+  return message.channel.send(queue.join("\n"));
+}
+
+function _playQueue(message) {
+  if (queue.length === 0) {
+    return message.channel.send('ERROR: Trying to play an empty queue :o');
+  }
+  _joinChannel(message);
+  musicPlayer.play(queue[0]);
+  return message.channel.send(`Playing ${queue[0]}`);
+}
+
+function _joinChannel(message) {
+  const voiceChannel = message.member.voice.channel;
+  if (!voiceChannel)
+    return message.channel.send ('You need to be in a voice channel to play music!');
+  const permissions = voiceChannel.permissionsFor (message.client.user);
+  if (!permissions.has ('CONNECT') || !permissions.has ('SPEAK')) {
+    return message.channel.send ('I need the permissions to join and speak in your voice channel!');
+  }
+  try {
+    voiceChannel.join()
+  } catch (e) {
+    console.log (e);
+  }
+}
 
 client
   .login (process.env.DICORD_BOT_TOKEN)
