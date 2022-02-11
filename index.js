@@ -143,6 +143,7 @@ function _joinChannel(message) {
   }
   try {
     voiceChannel.join()
+    message.channel.send("I am finally here, performing for you!");
     return true;
   } catch (e) {
     console.log (e);
