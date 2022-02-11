@@ -1,7 +1,9 @@
 import Discord from 'discord.js';
 import {loadDotEnv} from './lib/dotenv.js';
+import fetch from 'node-fetch';
+import {getYoutubeInfo} from './lib/youtube.js';
 
-loadDotEnv ();
+loadDotEnv();
 
 console.log(process.env);
 
@@ -13,46 +15,46 @@ class Command {
 }
 
 class MusicPlayer {
-
-  constructor() {}
-
-  play() {
-    return;
+  constructor(guildId, connection) {
+    this.guildId = guildId;
+    this.connection = connection;
   }
 
-  stop() {
-    return;
+  async play(queueItem) {
+    const res = await fetch(queueItem);
+    this.connection.play(res.body);
   }
+
+  stop() {}
 }
 
-const client = new Discord.Client ();
-const musicPlayer = new MusicPlayer();
+const client = new Discord.Client();
+const musicPlayers = new Map();
 
-client.once ('ready', () => {
-  console.log ('Ready!');
+client.once('ready', () => {
+  console.log('Ready!');
 });
 
-client.once ('reconnecting', () => {
-  console.log ('Reconnecting!');
+client.once('reconnecting', () => {
+  console.log('Reconnecting!');
 });
 
-client.once ('disconnect', () => {
-  console.log ('Disconnect!');
+client.once('disconnect', () => {
+  console.log('Disconnect!');
 });
 
-// prettier-sanctuary-ignore
 const commands = [
   new Command(/^!play (.*)$/i, _play),
   new Command(/^!stop$/i, _stop),
   new Command(/^!next (.*)$/i, _next),
   new Command(/^!skip$/i, _skip),
   new Command(/^!list$/i, _list),
-  new Command(/^!disconnect$/i, _disconnect)
-]
+  new Command(/^!disconnect$/i, _disconnect),
+];
 
 const queue = [];
 
-client.on ('message', async message => {
+client.on('message', async message => {
   commands.forEach(command => _checkCommand(command, message));
 });
 
@@ -64,12 +66,17 @@ function _checkCommand(command, message) {
   }
 }
 
-function _play(message, url) {
-  queue.push(url);
-  if (queue.length === 1) {
-    return _playQueue(message);
+async function _play(message, url) {
+  try {
+    const music = await getYoutubeInfo(url);
+    queue.push(music);
+    if (queue.length === 1) {
+      return _playQueue(message);
+    }
+    return message.channel.send(`Queuing ${url}`);
+  } catch (e) {
+    return message.channel.send(`Oups Something wrong happen : ${e}`);
   }
-  return message.channel.send(`Queuing ${url}`);
 }
 
 function _stop(message) {
@@ -91,7 +98,7 @@ function _skip(message) {
     message.channel.send('No song to skip to');
     return _stop();
   }
-  queue.splice(0,1);
+  queue.splice(0, 1);
   musicPlayer.stop();
   return _playQueue(message);
 }
@@ -100,18 +107,20 @@ function _list(message) {
   if (queue.length === 0) {
     return message.channel.send('The queue is empty :(');
   }
-  const msg = queue.map((value, index) => ` ${index}. ${value}`).join("\n");
+  const msg = queue.map((value, index) => ` ${index}. ${value}`).join('\n');
   return message.channel.send(msg);
 }
 
 function _disconnect(message) {
   const voiceChannel = message.member.voice.channel;
   if (!voiceChannel)
-    return message.channel.send('I will not disconnect! Come get me in the voice channel!');
+    return message.channel.send(
+      'I will not disconnect! Come get me in the voice channel!'
+    );
   try {
     _stop(message);
     voiceChannel.leave();
-    return message.channel.send("Ok, I will miss you.");
+    return message.channel.send('Ok, I will miss you.');
   } catch (e) {
     console.log(e);
   }
@@ -125,31 +134,36 @@ function _playQueue(message) {
     queue.splice(0, queue.length);
     return;
   }
-  message.channel.send('https://www.mariowiki.com/images/e/e8/Cranky_Kong_DJ.gif');
+  message.channel.send(
+    'https://www.mariowiki.com/images/e/e8/Cranky_Kong_DJ.gif'
+  );
   musicPlayer.play(queue[0]);
   return message.channel.send(`Playing ${queue[0]}`);
 }
 
 function _joinChannel(message) {
   const voiceChannel = message.member.voice.channel;
+
   if (!voiceChannel) {
     message.channel.send('You need to be in a voice channel to play music!');
     return false;
   }
-  const permissions = voiceChannel.permissionsFor (message.client.user);
-  if (!permissions.has ('CONNECT') || !permissions.has ('SPEAK')) {
-     message.channel.send ('I need the permissions to join and speak in your voice channel!');
-     return false;
+  const permissions = voiceChannel.permissionsFor(message.client.user);
+  if (!permissions.has('CONNECT') || !permissions.has('SPEAK')) {
+    message.channel.send(
+      'I need the permissions to join and speak in your voice channel!'
+    );
+    return false;
   }
   try {
-    voiceChannel.join()
-    message.channel.send("I am finally here, performing for you!");
+    voiceChannel.join();
+    message.channel.send('I am finally here, performing for you!');
     return true;
   } catch (e) {
-    console.log (e);
+    console.log(e);
   }
 }
 
 client
-  .login (process.env.DICORD_BOT_TOKEN)
-  .then (() => console.log ('client start'));
+  .login(process.env.DICORD_BOT_TOKEN)
+  .then(() => console.log('client start'));
