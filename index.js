@@ -5,8 +5,6 @@ import {getYoutubeInfo} from './lib/youtube.js';
 
 loadDotEnv();
 
-console.log(process.env);
-
 class Command {
   constructor(regex, func) {
     this.regex = regex;
@@ -26,10 +24,13 @@ class MusicPlayer {
   }
 
   stop() {}
+
+  isGuildId(guildId) {
+    return this.guildId === guildId;
+  }
 }
 
 const client = new Discord.Client();
-const musicPlayers = new Map();
 
 client.once('ready', () => {
   console.log('Ready!');
@@ -51,8 +52,6 @@ const commands = [
   new Command(/^!list$/i, _list),
   new Command(/^!disconnect$/i, _disconnect),
 ];
-
-const queue = [];
 
 client.on('message', async message => {
   commands.forEach(command => _checkCommand(command, message));
