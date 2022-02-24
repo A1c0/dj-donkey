@@ -1,7 +1,8 @@
 import Discord from 'discord.js';
+
+import {MusicPlayerCollection} from './app/music-queue.js';
 import {loadDotEnv} from './lib/dotenv.js';
-import fetch from 'node-fetch';
-import {getYoutubeInfo} from './lib/youtube.js';
+import {durationFromSeconds, getYoutubeInfo} from './lib/youtube.js';
 
 loadDotEnv();
 
@@ -12,23 +13,7 @@ class Command {
   }
 }
 
-class MusicPlayer {
-  constructor(guildId, connection) {
-    this.guildId = guildId;
-    this.connection = connection;
-  }
-
-  async play(queueItem) {
-    const res = await fetch(queueItem);
-    this.connection.play(res.body);
-  }
-
-  stop() {}
-
-  isGuildId(guildId) {
-    return this.guildId === guildId;
-  }
-}
+const collection = new MusicPlayerCollection();
 
 const client = new Discord.Client();
 
@@ -54,70 +39,122 @@ const commands = [
 ];
 
 client.on('message', async message => {
-  commands.forEach(command => _checkCommand(command, message));
+  const messageContent = message.content;
+  const command = commands.find(c => c.regex.test(messageContent));
+  if (command) {
+    const r = command.regex.exec(messageContent);
+    await command.func(message, r[1]);
+  }
 });
 
-function _checkCommand(command, message) {
-  const messageContent = message.content;
-  if (command.regex.test(messageContent)) {
-    const r = command.regex.exec(messageContent);
-    command.func(message, r[1]);
+function checkJoin(message) {
+  const voiceChannel = message.member.voice.channel;
+
+  if (!voiceChannel) {
+    throw new Error('You need to be in a voice channel to play music!');
+  }
+  const permissions = voiceChannel.permissionsFor(message.client.user);
+  if (!permissions.has('CONNECT') || !permissions.has('SPEAK')) {
+    throw new Error(
+      'I need the permissions to join and speak in your voice channel!'
+    );
+  }
+}
+
+async function _joinChannel(message) {
+  try {
+    checkJoin(message);
+  } catch (e) {
+    message.channel.send(e.message);
+  }
+  try {
+    const connection = await voiceChannel.join();
+    message.channel.send('I am finally here, performing for you!');
+    message.channel.send(
+      'https://www.mariowiki.com/images/e/e8/Cranky_Kong_DJ.gif'
+    );
+    return connection;
+  } catch (e) {
+    console.log(e);
+  }
+}
+
+async function findOrCreateMusicPlayer(message) {
+  try {
+    return collection.findByMessage(message);
+  } catch (e) {
+    const connection = await _joinChannel(message);
+    const voiceChannelId = message.member.voice.channel.id;
+    const guildId = message.guild.id;
+    return collection.addMusicPlayer(guildId, voiceChannelId, connection);
   }
 }
 
 async function _play(message, url) {
   try {
     const music = await getYoutubeInfo(url);
-    queue.push(music);
-    if (queue.length === 1) {
-      return _playQueue(message);
+    const musicPlayer = collection.findByMessage(message);
+    musicPlayer.addMusic(music);
+    if (musicPlayer.queue.length === 1) {
+      await _playQueue(message);
+      return;
     }
-    return message.channel.send(`Queuing ${url}`);
+    return message.channel.send(
+      `Queuing ${music.title} \`${durationFromSeconds(music.secondDuration)}`
+    );
   } catch (e) {
     return message.channel.send(`Oups Something wrong happen : ${e}`);
   }
 }
 
-function _stop(message) {
+async function _stop(message) {
+  const musicPlayer = findOrCreateMusicPlayer(message);
   musicPlayer.stop();
-  queue.splice(0, queue.length);
-  return message.channel.send('Stopping :(');
+
+  message.channel.send('Stopping :(');
 }
 
-function _next(message, url) {
-  if (queue.length === 0) {
-    return _play(url, message);
-  }
-  queue.splice(1, 0, url);
+async function _next(message, url) {
+  const music = await getYoutubeInfo(url);
+  const musicPlayer = await findOrCreateMusicPlayer(message);
+  musicPlayer.addNext(music);
   return message.channel.send(`Next song will be ${url}`);
 }
 
-function _skip(message) {
-  if (queue.length <= 1) {
+async function _skip(message) {
+  const musicPlayer = await findOrCreateMusicPlayer(message);
+  if (musicPlayer.queue.length <= 1) {
     message.channel.send('No song to skip to');
-    return _stop();
+    await _stop();
+    return;
   }
-  queue.splice(0, 1);
-  musicPlayer.stop();
-  return _playQueue(message);
+  musicPlayer.skip();
+  message.channel.send('Skipped');
 }
 
-function _list(message) {
+async function _list(message) {
+  const musicPlayer = await findOrCreateMusicPlayer(message);
+  const queue = musicPlayer.queue;
   if (queue.length === 0) {
     return message.channel.send('The queue is empty :(');
   }
-  const msg = queue.map((value, index) => ` ${index}. ${value}`).join('\n');
+  const msg = queue
+    .map(
+      ({title, secondDuration}, index) =>
+        ` ${index}. _${title}_ \`(${durationFromSeconds(secondDuration)})\``
+    )
+    .join('\n');
   return message.channel.send(msg);
 }
 
-function _disconnect(message) {
+async function _disconnect(message) {
   const voiceChannel = message.member.voice.channel;
   if (!voiceChannel)
     return message.channel.send(
       'I will not disconnect! Come get me in the voice channel!'
     );
   try {
-    _stop(message);
+    await _stop(message);
     voiceChannel.leave();
     return message.channel.send('Ok, I will miss you.');
   } catch (e) {
@@ -125,42 +162,15 @@ function _disconnect(message) {
   }
 }
 
-function _playQueue(message) {
-  if (queue.length === 0) {
-    return message.channel.send('ERROR: Trying to play an empty queue :o');
-  }
-  if (!_joinChannel(message)) {
-    queue.splice(0, queue.length);
+async function _playQueue(message) {
+  const musicPlayer = await findOrCreateMusicPlayer(message);
+  if (musicPlayer.queue.length === 0) {
+    message.channel.send('ERROR: Trying to play an empty queue :o');
     return;
   }
-  message.channel.send(
-    'https://www.mariowiki.com/images/e/e8/Cranky_Kong_DJ.gif'
-  );
-  musicPlayer.play(queue[0]);
-  return message.channel.send(`Playing ${queue[0]}`);
-}
 
-function _joinChannel(message) {
-  const voiceChannel = message.member.voice.channel;
-
-  if (!voiceChannel) {
-    message.channel.send('You need to be in a voice channel to play music!');
-    return false;
-  }
-  const permissions = voiceChannel.permissionsFor(message.client.user);
-  if (!permissions.has('CONNECT') || !permissions.has('SPEAK')) {
-    message.channel.send(
-      'I need the permissions to join and speak in your voice channel!'
-    );
-    return false;
-  }
-  try {
-    voiceChannel.join();
-    message.channel.send('I am finally here, performing for you!');
-    return true;
-  } catch (e) {
-    console.log(e);
-  }
+  const music = await musicPlayer.startPlay();
+  message.channel.send(`Playing ${music.title}`);
 }
 
 client
